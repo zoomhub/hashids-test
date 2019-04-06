@@ -1,0 +1,6 @@
+[submodule "vendor/hashids.js"]
+	path = vendor/hashids.js
+	url = https://github.com/ivanakimov/hashids.js
+[submodule "vendor/hashids.sql"]
+	path = vendor/hashids.sql
+	url = https://github.com/zoomhub/hashids.sql
