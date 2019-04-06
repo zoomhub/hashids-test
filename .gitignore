@@ -1,3 +1,7 @@
+# macOS
+.DS_Store
+
+# Haskell
 .stack-work/
 hashids-test.cabal
 *~
