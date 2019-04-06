@@ -47,7 +47,9 @@ tests:
     dependencies:
     - hashids-test
 
+    - containers
     - hedgehog
+    - process
     - tasty
     - tasty-expected-failure
     - tasty-hedgehog

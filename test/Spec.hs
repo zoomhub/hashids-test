@@ -1,43 +1,93 @@
-import Hedgehog
+import Data.Set (Set)
+import Hedgehog (Gen, Property, property, forAll, (===))
+import qualified Data.Set as Set
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
-import Test.Tasty
-import Test.Tasty.ExpectedFailure
-import Test.Tasty.Hedgehog
+import System.Environment (getEnv)
+import System.Process (callCommand, readCreateProcess, CreateProcess(..), shell)
+import Test.Tasty (defaultMain, testGroup, withResource)
+import Test.Tasty.Hedgehog (testProperty)
+import Control.Monad.IO.Class (liftIO)
 
-genAlphaList :: Gen String
-genAlphaList =
+data Language
+  = JavaScript
+  | PLpgSQL
+
+toPath :: Language -> String
+toPath JavaScript = "js"
+toPath PLpgSQL = "plpgsql"
+
+jsEncode :: String -> Set Char -> Int -> Int -> IO String
+jsEncode = encode JavaScript
+
+plpgsqlEncode :: String -> Set Char -> Int -> Int -> IO String
+plpgsqlEncode = encode PLpgSQL
+
+encode :: Language -> String -> Set Char -> Int -> Int -> IO String
+encode lang salt alphabet minLength id_ = do
+  path <- getEnv "PATH" -- NOTE: Required to find `psql`
+  let cmd = (shell $ "./adapters/" <> toPath lang <> "/encode.sh")
+              { env = Just
+                  [ ("PATH", path)
+                  , ("HASHIDS_SALT", salt)
+                  -- HACK: Disable custom alphabets as it breaks PL/pgSQL
+                  -- implementation:
+                  -- https://github.com/andreystepanov/hashids.sql/issues/2
+                  -- , ("HASHIDS_ALPHABET", Set.toList alphabet)
+                  , ("HASHIDS_MIN_LENGTH", show minLength)
+                  , ("HASHIDS_ID", show id_)
+                  ]
+              }
+  readCreateProcess cmd ""
+
+-- #############################################################################
+
+genSalt :: Gen String
+genSalt =
   Gen.list (Range.linear 0 100) Gen.alphaNum
 
-test_involutive :: (MonadTest m, Eq a, Show a) => (a -> a) -> a -> m ()
-test_involutive f x =
-  f (f x) === x
+genAlphabet :: Gen (Set Char)
+genAlphabet =
+  Gen.set (Range.linear 16 100) Gen.alphaNum
 
-prop_reverse_involutive :: Property
-prop_reverse_involutive =
+genMinLength :: Gen Int
+genMinLength =
+  Gen.integral (Range.constant 0 10)
+
+genId :: Gen Int
+genId =
+  Gen.integral (Range.constant 0 1000000000000)
+
+-- #############################################################################
+
+prop_plpsql_matches_javascript :: Property
+prop_plpsql_matches_javascript =
   property $ do
-    xs <- forAll genAlphaList
-    test_involutive reverse xs
+    salt <- forAll genSalt
+    alphabet <- forAll genAlphabet
+    minLength <- forAll genMinLength
+    id_ <- forAll genId
 
-badReverse :: [a] -> [a]
-badReverse [] = []
-badReverse [_] = []
-badReverse (x : xs) = badReverse xs ++ [x]
+    jsResult <- liftIO $ jsEncode salt alphabet minLength id_
+    plpgsqlResult <- liftIO $ plpgsqlEncode salt alphabet minLength id_
 
-prop_badReverse_involutive :: Property
-prop_badReverse_involutive =
-  property $ do
-    xs <- forAll genAlphaList
-    test_involutive badReverse xs
+    jsResult === plpgsqlResult
+
+-- #############################################################################
+
+setupDatabase :: IO ()
+setupDatabase =
+  callCommand $ "./adapters/" <> toPath PLpgSQL <> "/setup.sh"
+
+teardownDatabase :: () -> IO ()
+teardownDatabase _ =
+  callCommand $ "./adapters/" <> toPath PLpgSQL <> "/teardown.sh"
+
+-- #############################################################################
 
 main :: IO ()
-main =
-  defaultMain $
-  testGroup "hashids.sql vs hashids.js"
-    [ testProperty
-        "reverse involutive"
-        prop_reverse_involutive
-    , expectFail $ testProperty
-        "badReverse involutive fails"
-         prop_badReverse_involutive
-    ]
+main = defaultMain $
+  withResource setupDatabase teardownDatabase $ \_ ->
+    testGroup "hashids.sql vs hashids.js"
+      [ testProperty "PL/pSQL matches JavaScript" prop_plpsql_matches_javascript
+      ]
