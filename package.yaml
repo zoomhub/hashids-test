@@ -46,3 +46,8 @@ tests:
     - -with-rtsopts=-N
     dependencies:
     - hashids-test
+
+    - hedgehog
+    - tasty
+    - tasty-expected-failure
+    - tasty-hedgehog
